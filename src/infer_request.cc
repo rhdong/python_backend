@@ -575,6 +575,12 @@ InferRequest::Exec(const bool is_decoupled)
         ipc_message->ResponseCondition()->notify_all();
         ipc_message->ResponseCondition()->wait(lock);
       }
+      
+      auto gpu_end = std::chrono::high_resolution_clock::now();
+      auto gpu_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+          gpu_end - gpu_start).count();
+      LOG_INFO << "[GIL] BLS GPU - Total GPU operation took " 
+               << gpu_duration << " us";
     }
 
     // The exception will be thrown after the message was sent to the main
