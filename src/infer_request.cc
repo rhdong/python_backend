@@ -27,6 +27,7 @@
 #include "infer_request.h"
 
 #include <boost/interprocess/sync/scoped_lock.hpp>
+#include <chrono>
 
 #include "gpu_buffers.h"
 #include "pb_utils.h"
@@ -415,7 +416,31 @@ InferRequest::Exec(const bool is_decoupled)
   // function in the stub process that acquires the GIL. Meanwhile, the current
   // thread, which holds the GIL, is also waiting for the parent side to have
   // the next available thread to pick up the job during resource contention.
+  
+  // Log GIL timing
+  auto exec_start = std::chrono::high_resolution_clock::now();
+  auto gil_release_start = std::chrono::high_resolution_clock::now();
+  
   py::gil_scoped_release release;
+  
+  auto gil_release_end = std::chrono::high_resolution_clock::now();
+  auto gil_release_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      gil_release_end - gil_release_start).count();
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("[GIL] BLS Exec - GIL released in ") + 
+       std::to_string(gil_release_duration) + " us").c_str());
+  
+  // Log total execution time when GIL is reacquired
+  ScopedDefer log_exec_time([exec_start] {
+    auto exec_end = std::chrono::high_resolution_clock::now();
+    auto exec_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        exec_end - exec_start).count();
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[GIL] BLS Exec - Total execution time ") + 
+         std::to_string(exec_duration) + " us").c_str());
+  });
 
   // BLS should not be used in "initialize" or "finalize" function.
   std::unique_ptr<Stub>& stub = Stub::GetOrCreateInstance();
@@ -484,13 +509,31 @@ InferRequest::Exec(const bool is_decoupled)
     {
       bi::scoped_lock<bi::interprocess_mutex> lock{
           *(ipc_message->ResponseMutex())};
+      
+      auto send_start = std::chrono::high_resolution_clock::now();
       stub->SendIPCUtilsMessage(ipc_message);
+      
+      auto wait_start = std::chrono::high_resolution_clock::now();
       ipc_message->ResponseCondition()->wait(lock);
+      auto wait_end = std::chrono::high_resolution_clock::now();
+      
+      auto send_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+          wait_start - send_start).count();
+      auto wait_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+          wait_end - wait_start).count();
+      
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_INFO,
+          (std::string("[GIL] BLS IPC - Send took ") + 
+           std::to_string(send_duration) + " us, wait took " +
+           std::to_string(wait_duration) + " us").c_str());
     }
 
     // Additional round trip required for asking the stub process
     // to fill in the GPU tensor buffers
     if (has_gpu_tensor) {
+      auto gpu_start = std::chrono::high_resolution_clock::now();
+      
       AllocatedSharedMemory<GPUBuffersShm> gpu_buffers_shm =
           shm_pool->Load<GPUBuffersShm>(
               request_batch_shm_ptr->gpu_buffers_handle);
@@ -505,6 +548,7 @@ InferRequest::Exec(const bool is_decoupled)
           throw PythonBackendException(error->String());
         }
 #ifdef TRITON_ENABLE_GPU
+        auto copy_start = std::chrono::high_resolution_clock::now();
         size_t i = 0;
         for (auto& input_tensor : this->Inputs()) {
           if (!input_tensor->IsCPU()) {
@@ -516,6 +560,13 @@ InferRequest::Exec(const bool is_decoupled)
             ++i;
           }
         }
+        auto copy_end = std::chrono::high_resolution_clock::now();
+        auto copy_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+            copy_end - copy_start).count();
+        LOG_MESSAGE(
+            TRITONSERVER_LOG_INFO,
+            (std::string("[GIL] BLS GPU - Copy buffers took ") + 
+             std::to_string(copy_duration) + " us").c_str());
 #endif  // TRITON_ENABLE_GPU
       }
       catch (const PythonBackendException& exception) {
@@ -540,6 +591,8 @@ InferRequest::Exec(const bool is_decoupled)
     }
 
     // Get the response for the current message.
+    auto response_load_start = std::chrono::high_resolution_clock::now();
+    
     std::unique_ptr<IPCMessage> bls_response = IPCMessage::LoadFromSharedMemory(
         shm_pool, ipc_message->ResponseHandle());
 
@@ -549,6 +602,14 @@ InferRequest::Exec(const bool is_decoupled)
         reinterpret_cast<ResponseBatch*>(response_batch_shm.data_.get());
     response_handle = reinterpret_cast<bi::managed_external_buffer::handle_t*>(
         response_batch_shm.data_.get() + sizeof(ResponseBatch));
+    
+    auto response_load_end = std::chrono::high_resolution_clock::now();
+    auto response_load_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        response_load_end - response_load_start).count();
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[GIL] BLS Response - Load response took ") + 
+         std::to_string(response_load_duration) + " us").c_str());
 
     responses_is_set = true;
     if (response_batch->has_error) {
@@ -580,10 +641,20 @@ InferRequest::Exec(const bool is_decoupled)
 
   if (responses_is_set) {
     auto& memory_manager_message_queue = stub->MemoryManagerQueue();
+    
+    auto create_response_start = std::chrono::high_resolution_clock::now();
     std::unique_ptr<InferResponse> return_response =
         InferResponse::LoadFromSharedMemory(
             shm_pool, *response_handle, true /* open cuda handle */);
+    auto create_response_end = std::chrono::high_resolution_clock::now();
+    auto create_response_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        create_response_end - create_response_start).count();
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[GIL] BLS Response - Create response took ") + 
+         std::to_string(create_response_duration) + " us").c_str());
 
+    auto setup_callback_start = std::chrono::high_resolution_clock::now();
     for (auto& output_tensor : return_response->OutputTensors()) {
       if (!output_tensor->IsCPU()) {
         uint64_t memory_release_id = output_tensor->Memory()->MemoryReleaseId();
@@ -593,6 +664,13 @@ InferRequest::Exec(const bool is_decoupled)
             });
       }
     }
+    auto setup_callback_end = std::chrono::high_resolution_clock::now();
+    auto setup_callback_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        setup_callback_end - setup_callback_start).count();
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[GIL] BLS Response - Setup callbacks took ") + 
+         std::to_string(setup_callback_duration) + " us").c_str());
 
     return return_response;
   } else {

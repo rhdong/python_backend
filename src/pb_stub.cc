@@ -34,6 +34,7 @@
 #include <boost/interprocess/sync/interprocess_mutex.hpp>
 #include <boost/interprocess/sync/scoped_lock.hpp>
 #include <boost/thread/thread_time.hpp>
+#include <chrono>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -272,8 +273,30 @@ Stub::RunCommand()
     // Release the GIL lock when waiting for new message. Without this line, the
     // other threads in the user's Python model cannot make progress if they
     // give up GIL.
+    
+    // Log GIL timing
+    auto gil_release_start = std::chrono::high_resolution_clock::now();
+    
     py::gil_scoped_release release;
+    
+    auto gil_release_end = std::chrono::high_resolution_clock::now();
+    auto gil_release_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        gil_release_end - gil_release_start).count();
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[GIL] Stub::RunCommand - GIL released in ") + 
+         std::to_string(gil_release_duration) + " us, waiting for message").c_str());
+    
+    auto wait_start = std::chrono::high_resolution_clock::now();
     ipc_message = this->PopMessage();
+    auto wait_end = std::chrono::high_resolution_clock::now();
+    auto wait_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        wait_end - wait_start).count();
+    
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_INFO,
+        (std::string("[GIL] Stub::RunCommand - Message wait completed in ") + 
+         std::to_string(wait_duration) + " us").c_str());
   }
   switch (ipc_message->Command()) {
     case PYTHONSTUB_CommandType::PYTHONSTUB_AutoCompleteRequest: {
@@ -699,7 +722,15 @@ Stub::ProcessRequests(RequestBatch* request_batch_shm_ptr)
     {
       NVTX_RANGE(nvtx_, "PyExecute " + name_);
 
+      auto py_execute_start = std::chrono::high_resolution_clock::now();
       execute_return = model_instance_.attr("execute")(py_request_list);
+      auto py_execute_end = std::chrono::high_resolution_clock::now();
+      auto py_execute_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+          py_execute_end - py_execute_start).count();
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_INFO,
+          (std::string("[GIL] Python execute() took ") + 
+           std::to_string(py_execute_duration) + " us").c_str());
 
       bool is_coroutine = py::module::import("asyncio")
                               .attr("iscoroutine")(execute_return)
@@ -709,8 +740,17 @@ Stub::ProcessRequests(RequestBatch* request_batch_shm_ptr)
           // Do not wait for async decoupled execute to return.
           RunCoroutine(execute_return, true /* in_background */);
         } else {
+          auto coroutine_start = std::chrono::high_resolution_clock::now();
           coroutine_return =
               RunCoroutine(execute_return, false /* in_background */);
+          auto coroutine_end = std::chrono::high_resolution_clock::now();
+          auto coroutine_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+              coroutine_end - coroutine_start).count();
+          LOG_MESSAGE(
+              TRITONSERVER_LOG_INFO,
+              (std::string("[GIL] RunCoroutine took ") + 
+               std::to_string(coroutine_duration) + " us").c_str());
+          
           ProcessReturnedResponses(
               py_request_list, coroutine_return, response_batch);
         }
@@ -796,7 +836,15 @@ Stub::ProcessRequests(RequestBatch* request_batch_shm_ptr)
 void
 Stub::ProcessResponse(InferResponse* response)
 {
+  auto save_start = std::chrono::high_resolution_clock::now();
   response->SaveToSharedMemory(shm_pool_, false /* copy_gpu */);
+  auto save_end = std::chrono::high_resolution_clock::now();
+  auto save_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      save_end - save_start).count();
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("[GIL] SaveToSharedMemory took ") + 
+       std::to_string(save_duration) + " us").c_str());
 
   for (auto& output_tensor : response->OutputTensors()) {
     if (!output_tensor->IsCPU()) {
@@ -810,6 +858,8 @@ Stub::ProcessReturnedResponses(
     py::list py_requests, py::object py_responses_obj,
     std::optional<AllocatedSharedMemory<char>>& response_batch)
 {
+  auto process_start = std::chrono::high_resolution_clock::now();
+  
   // Return if there is nothing to process.
   if (py::isinstance<py::none>(py_responses_obj)) {
     return;
@@ -827,6 +877,10 @@ Stub::ProcessReturnedResponses(
         "Expected a list in the execute return, found type '" +
         std::string(py::str(py_responses_obj.get_type())) + "'.");
   }
+  
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("[GIL] ProcessReturnedResponses started").c_str());
   py::list py_responses = py_responses_obj;
   // Responses and requests length must match.
   size_t requests_size = py::len(py_requests);
@@ -905,6 +959,14 @@ Stub::ProcessReturnedResponses(
     }
   }
   response_batch_shm_ptr->batch_size = requests_size;
+  
+  auto process_end = std::chrono::high_resolution_clock::now();
+  auto process_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      process_end - process_start).count();
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("[GIL] ProcessReturnedResponses took ") + 
+       std::to_string(process_duration) + " us").c_str());
 }
 
 py::object
