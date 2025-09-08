@@ -34,6 +34,7 @@
 #include "scoped_defer.h"
 #ifdef TRITON_PB_STUB
 #include "pb_stub.h"
+#include "pb_stub_log.h"
 #endif
 
 namespace triton { namespace backend { namespace python {
@@ -426,20 +427,16 @@ InferRequest::Exec(const bool is_decoupled)
   auto gil_release_end = std::chrono::high_resolution_clock::now();
   auto gil_release_duration = std::chrono::duration_cast<std::chrono::microseconds>(
       gil_release_end - gil_release_start).count();
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("[GIL] BLS Exec - GIL released in ") + 
-       std::to_string(gil_release_duration) + " us").c_str());
+  LOG_INFO << "[GIL] BLS Exec - GIL released in " 
+           << gil_release_duration << " us";
   
   // Log total execution time when GIL is reacquired
   ScopedDefer log_exec_time([exec_start] {
     auto exec_end = std::chrono::high_resolution_clock::now();
     auto exec_duration = std::chrono::duration_cast<std::chrono::microseconds>(
         exec_end - exec_start).count();
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("[GIL] BLS Exec - Total execution time ") + 
-         std::to_string(exec_duration) + " us").c_str());
+    LOG_INFO << "[GIL] BLS Exec - Total execution time " 
+             << exec_duration << " us";
   });
 
   // BLS should not be used in "initialize" or "finalize" function.
@@ -522,11 +519,9 @@ InferRequest::Exec(const bool is_decoupled)
       auto wait_duration = std::chrono::duration_cast<std::chrono::microseconds>(
           wait_end - wait_start).count();
       
-      LOG_MESSAGE(
-          TRITONSERVER_LOG_INFO,
-          (std::string("[GIL] BLS IPC - Send took ") + 
-           std::to_string(send_duration) + " us, wait took " +
-           std::to_string(wait_duration) + " us").c_str());
+      LOG_INFO << "[GIL] BLS IPC - Send took " 
+               << send_duration << " us, wait took "
+               << wait_duration << " us";
     }
 
     // Additional round trip required for asking the stub process
@@ -563,10 +558,8 @@ InferRequest::Exec(const bool is_decoupled)
         auto copy_end = std::chrono::high_resolution_clock::now();
         auto copy_duration = std::chrono::duration_cast<std::chrono::microseconds>(
             copy_end - copy_start).count();
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_INFO,
-            (std::string("[GIL] BLS GPU - Copy buffers took ") + 
-             std::to_string(copy_duration) + " us").c_str());
+        LOG_INFO << "[GIL] BLS GPU - Copy buffers took " 
+                 << copy_duration << " us";
 #endif  // TRITON_ENABLE_GPU
       }
       catch (const PythonBackendException& exception) {
@@ -606,10 +599,8 @@ InferRequest::Exec(const bool is_decoupled)
     auto response_load_end = std::chrono::high_resolution_clock::now();
     auto response_load_duration = std::chrono::duration_cast<std::chrono::microseconds>(
         response_load_end - response_load_start).count();
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("[GIL] BLS Response - Load response took ") + 
-         std::to_string(response_load_duration) + " us").c_str());
+    LOG_INFO << "[GIL] BLS Response - Load response took " 
+             << response_load_duration << " us";
 
     responses_is_set = true;
     if (response_batch->has_error) {
@@ -649,10 +640,8 @@ InferRequest::Exec(const bool is_decoupled)
     auto create_response_end = std::chrono::high_resolution_clock::now();
     auto create_response_duration = std::chrono::duration_cast<std::chrono::microseconds>(
         create_response_end - create_response_start).count();
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("[GIL] BLS Response - Create response took ") + 
-         std::to_string(create_response_duration) + " us").c_str());
+    LOG_INFO << "[GIL] BLS Response - Create response took " 
+             << create_response_duration << " us";
 
     auto setup_callback_start = std::chrono::high_resolution_clock::now();
     for (auto& output_tensor : return_response->OutputTensors()) {
@@ -667,10 +656,8 @@ InferRequest::Exec(const bool is_decoupled)
     auto setup_callback_end = std::chrono::high_resolution_clock::now();
     auto setup_callback_duration = std::chrono::duration_cast<std::chrono::microseconds>(
         setup_callback_end - setup_callback_start).count();
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("[GIL] BLS Response - Setup callbacks took ") + 
-         std::to_string(setup_callback_duration) + " us").c_str());
+    LOG_INFO << "[GIL] BLS Response - Setup callbacks took " 
+             << setup_callback_duration << " us";
 
     return return_response;
   } else {

@@ -282,10 +282,8 @@ Stub::RunCommand()
     auto gil_release_end = std::chrono::high_resolution_clock::now();
     auto gil_release_duration = std::chrono::duration_cast<std::chrono::microseconds>(
         gil_release_end - gil_release_start).count();
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("[GIL] Stub::RunCommand - GIL released in ") + 
-         std::to_string(gil_release_duration) + " us, waiting for message").c_str());
+    LOG_INFO << "[GIL] Stub::RunCommand - GIL released in " 
+             << gil_release_duration << " us, waiting for message";
     
     auto wait_start = std::chrono::high_resolution_clock::now();
     ipc_message = this->PopMessage();
@@ -293,10 +291,8 @@ Stub::RunCommand()
     auto wait_duration = std::chrono::duration_cast<std::chrono::microseconds>(
         wait_end - wait_start).count();
     
-    LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("[GIL] Stub::RunCommand - Message wait completed in ") + 
-         std::to_string(wait_duration) + " us").c_str());
+    LOG_INFO << "[GIL] Stub::RunCommand - Message wait completed in " 
+             << wait_duration << " us";
   }
   switch (ipc_message->Command()) {
     case PYTHONSTUB_CommandType::PYTHONSTUB_AutoCompleteRequest: {
@@ -727,10 +723,8 @@ Stub::ProcessRequests(RequestBatch* request_batch_shm_ptr)
       auto py_execute_end = std::chrono::high_resolution_clock::now();
       auto py_execute_duration = std::chrono::duration_cast<std::chrono::microseconds>(
           py_execute_end - py_execute_start).count();
-      LOG_MESSAGE(
-          TRITONSERVER_LOG_INFO,
-          (std::string("[GIL] Python execute() took ") + 
-           std::to_string(py_execute_duration) + " us").c_str());
+      LOG_INFO << "[GIL] Python execute() took " 
+               << py_execute_duration << " us";
 
       bool is_coroutine = py::module::import("asyncio")
                               .attr("iscoroutine")(execute_return)
@@ -746,10 +740,8 @@ Stub::ProcessRequests(RequestBatch* request_batch_shm_ptr)
           auto coroutine_end = std::chrono::high_resolution_clock::now();
           auto coroutine_duration = std::chrono::duration_cast<std::chrono::microseconds>(
               coroutine_end - coroutine_start).count();
-          LOG_MESSAGE(
-              TRITONSERVER_LOG_INFO,
-              (std::string("[GIL] RunCoroutine took ") + 
-               std::to_string(coroutine_duration) + " us").c_str());
+          LOG_INFO << "[GIL] RunCoroutine took " 
+                   << coroutine_duration << " us";
           
           ProcessReturnedResponses(
               py_request_list, coroutine_return, response_batch);
@@ -841,10 +833,8 @@ Stub::ProcessResponse(InferResponse* response)
   auto save_end = std::chrono::high_resolution_clock::now();
   auto save_duration = std::chrono::duration_cast<std::chrono::microseconds>(
       save_end - save_start).count();
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("[GIL] SaveToSharedMemory took ") + 
-       std::to_string(save_duration) + " us").c_str());
+  LOG_INFO << "[GIL] SaveToSharedMemory took " 
+           << save_duration << " us";
 
   for (auto& output_tensor : response->OutputTensors()) {
     if (!output_tensor->IsCPU()) {
@@ -878,9 +868,7 @@ Stub::ProcessReturnedResponses(
         std::string(py::str(py_responses_obj.get_type())) + "'.");
   }
   
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("[GIL] ProcessReturnedResponses started").c_str()));
+  LOG_INFO << "[GIL] ProcessReturnedResponses started";
   py::list py_responses = py_responses_obj;
   // Responses and requests length must match.
   size_t requests_size = py::len(py_requests);
@@ -963,10 +951,8 @@ Stub::ProcessReturnedResponses(
   auto process_end = std::chrono::high_resolution_clock::now();
   auto process_duration = std::chrono::duration_cast<std::chrono::microseconds>(
       process_end - process_start).count();
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("[GIL] ProcessReturnedResponses took ") + 
-       std::to_string(process_duration) + " us").c_str());
+  LOG_INFO << "[GIL] ProcessReturnedResponses took " 
+           << process_duration << " us";
 }
 
 py::object

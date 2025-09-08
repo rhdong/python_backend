@@ -32,6 +32,7 @@
 
 #include "pb_stub.h"
 #include "pb_stub_utils.h"
+#include "pb_stub_log.h"
 #include "scoped_defer.h"
 
 namespace triton { namespace backend { namespace python {
@@ -131,10 +132,8 @@ ResponseSender::Send(
   auto gil_release_end = std::chrono::high_resolution_clock::now();
   auto gil_release_duration = std::chrono::duration_cast<std::chrono::microseconds>(
       gil_release_end - gil_release_start).count();
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("[GIL] ResponseSender::Send - GIL released in ") + 
-       std::to_string(gil_release_duration) + " us").c_str());
+  LOG_INFO << "[GIL] ResponseSender::Send - GIL released in " 
+           << gil_release_duration << " us";
 
   CheckResponseSenderArguments(infer_response, flags);
   UpdateStateAndCounters(infer_response.get(), flags);
