@@ -880,7 +880,7 @@ Stub::ProcessReturnedResponses(
   
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("[GIL] ProcessReturnedResponses started").c_str());
+      (std::string("[GIL] ProcessReturnedResponses started").c_str()));
   py::list py_responses = py_responses_obj;
   // Responses and requests length must match.
   size_t requests_size = py::len(py_requests);
