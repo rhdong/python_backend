@@ -38,6 +38,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <cstdio>
 #include <memory>
 #include <regex>
 #include <thread>
@@ -74,6 +75,19 @@ namespace bi = boost::interprocess;
 #ifndef TRITON_ENABLE_GPU
 using cudaStream_t = void*;
 #endif
+
+// Direct stderr logging macro to avoid IPC deadlock in high-concurrency scenarios
+#define LOG_STDERR(msg) do { \
+    auto now = std::chrono::system_clock::now(); \
+    auto time_t = std::chrono::system_clock::to_time_t(now); \
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>( \
+        now.time_since_epoch()).count() % 1000; \
+    char buffer[100]; \
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", \
+                  std::localtime(&time_t)); \
+    std::cerr << "[" << buffer << "." << std::setfill('0') << std::setw(3) << ms << "] " \
+              << msg << std::endl; \
+} while(0)
 
 namespace triton { namespace backend { namespace python {
 
@@ -1081,7 +1095,7 @@ Stub::SendIPCUtilsMessage(std::unique_ptr<IPCMessage>& ipc_message)
   auto total_start = std::chrono::high_resolution_clock::now();
   int retry_count = 0;
   bool success = false;
-  LOG_INFO << "[IPC] SendIPCUtilsMessage in";
+  
   // Record the first push attempt timing
   auto first_push_start = std::chrono::high_resolution_clock::now();
   stub_to_parent_mq_->Push(ipc_message->ShmHandle(), 1000, success);
@@ -1092,8 +1106,8 @@ Stub::SendIPCUtilsMessage(std::unique_ptr<IPCMessage>& ipc_message)
         first_push_end - first_push_start).count();
     
     // Log only when the first attempt fails
-    LOG_INFO << "[IPC] SendIPCUtilsMessage - First push failed after " 
-             << first_push_duration << " us, starting retries";
+    LOG_STDERR("[IPC] SendIPCUtilsMessage - First push failed after " 
+               << first_push_duration << " us, starting retries");
     
     while (!success) {
       retry_count++;
@@ -1103,8 +1117,8 @@ Stub::SendIPCUtilsMessage(std::unique_ptr<IPCMessage>& ipc_message)
       if (retry_count % 100 == 0) {
         auto current_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - total_start).count();
-        LOG_INFO << "[IPC] SendIPCUtilsMessage - Still retrying, count: " << retry_count
-                 << ", elapsed: " << current_duration << " ms";
+        LOG_STDERR("[IPC] SendIPCUtilsMessage - Still retrying, count: " << retry_count
+                   << ", elapsed: " << current_duration << " ms");
       }
     }
   }
@@ -1115,8 +1129,8 @@ Stub::SendIPCUtilsMessage(std::unique_ptr<IPCMessage>& ipc_message)
   
   // Log only when there were retries or duration exceeds threshold
   if (retry_count > 0 || total_duration > 1000) {  // Log if took more than 1ms
-    LOG_INFO << "[IPC] SendIPCUtilsMessage - Completed. Duration: " << total_duration 
-             << " us, retries: " << retry_count;
+    LOG_STDERR("[IPC] SendIPCUtilsMessage - Completed. Duration: " << total_duration 
+               << " us, retries: " << retry_count);
   }
 }
 

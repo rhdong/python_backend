@@ -37,6 +37,20 @@
 #include "shm_manager.h"
 #ifdef TRITON_PB_STUB
 #include "pb_stub_log.h"
+// Direct stderr logging to avoid IPC deadlock
+#include <ctime>
+#include <iomanip>
+#define LOG_STDERR(msg) do { \
+    auto now = std::chrono::system_clock::now(); \
+    auto time_t = std::chrono::system_clock::to_time_t(now); \
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>( \
+        now.time_since_epoch()).count() % 1000; \
+    char buffer[100]; \
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", \
+                  std::localtime(&time_t)); \
+    std::cerr << "[" << buffer << "." << std::setfill('0') << std::setw(3) << ms << "] " \
+              << msg << std::endl; \
+} while(0)
 #endif
 
 namespace triton { namespace backend { namespace python {
@@ -158,8 +172,8 @@ class MessageQueue {
           auto sem_wait_end = std::chrono::high_resolution_clock::now();
           auto sem_wait_duration = std::chrono::duration_cast<std::chrono::microseconds>(
               sem_wait_end - sem_wait_start).count();
-          LOG_INFO << "[IPC] MessageQueue::Push - Semaphore wait timeout after " 
-                   << sem_wait_duration << " us";
+          LOG_STDERR("[IPC] MessageQueue::Push - Semaphore wait timeout after " 
+                     << sem_wait_duration << " us");
 #endif
           return;
         } else {
@@ -186,8 +200,8 @@ class MessageQueue {
         auto lock_end = std::chrono::high_resolution_clock::now();
         auto lock_duration = std::chrono::duration_cast<std::chrono::microseconds>(
             lock_end - lock_start).count();
-        LOG_INFO << "[IPC] MessageQueue::Push - Mutex lock timeout after " 
-                 << lock_duration << " us";
+        LOG_STDERR("[IPC] MessageQueue::Push - Mutex lock timeout after " 
+                   << lock_duration << " us");
 #endif
         return;
       }
@@ -232,10 +246,10 @@ class MessageQueue {
       
       // Only log detailed timing when duration exceeds threshold (e.g., 100us)
       if (total_duration > 100) {
-        LOG_INFO << "[IPC] MessageQueue::Push - sem_wait_us=" << sem_wait_duration
-                 << " lock_us=" << lock_duration
-                 << " write_us=" << write_duration
-                 << " total_us=" << total_duration;
+        LOG_STDERR("[IPC] MessageQueue::Push - sem_wait_us=" << sem_wait_duration
+                   << " lock_us=" << lock_duration
+                   << " write_us=" << write_duration
+                   << " total_us=" << total_duration);
       }
 #endif
     }
