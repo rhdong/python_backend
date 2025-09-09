@@ -511,8 +511,16 @@ InferRequest::Exec(const bool is_decoupled)
       stub->SendIPCUtilsMessage(ipc_message);
       
       auto wait_start = std::chrono::high_resolution_clock::now();
+      auto wait_start_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+          wait_start.time_since_epoch()).count();
+      LOG_INFO << "[GIL] BLS IPC - Starting wait at " << wait_start_ms << " us";
+      
       ipc_message->ResponseCondition()->wait(lock);
+      
       auto wait_end = std::chrono::high_resolution_clock::now();
+      auto wait_end_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+          wait_end.time_since_epoch()).count();
+      LOG_INFO << "[GIL] BLS IPC - Wait completed at " << wait_end_ms << " us";
       
       auto send_duration = std::chrono::duration_cast<std::chrono::microseconds>(
           wait_start - send_start).count();

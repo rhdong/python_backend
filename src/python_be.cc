@@ -25,6 +25,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "python_be.h"
 
+#include <chrono>
 #include <filesystem>
 
 #include "correlation_id.h"
@@ -561,6 +562,9 @@ void
 ModelInstanceState::ExecuteBLSRequest(
     std::shared_ptr<IPCMessage> ipc_message, const bool is_decoupled)
 {
+  auto exec_start = std::chrono::high_resolution_clock::now();
+  LOG_MESSAGE(TRITONSERVER_LOG_INFO, "[BLS] Parent ExecuteBLSRequest started");
+  
   bool is_response_batch_set = false;
   std::unique_ptr<InferResponse> infer_response;
   ResponseBatch* response_batch = nullptr;
@@ -658,9 +662,19 @@ ModelInstanceState::ExecuteBLSRequest(
         std::shared_ptr<InferPayload> infer_payload =
             std::make_shared<InferPayload>(is_decoupled, callback);
 
+        LOG_MESSAGE(TRITONSERVER_LOG_INFO, "[BLS] Parent calling downstream model");
+        auto downstream_start = std::chrono::high_resolution_clock::now();
+        
         auto response_future =
             request_executor_->Infer(infer_request, infer_payload);
         infer_response = response_future.get();
+        
+        auto downstream_end = std::chrono::high_resolution_clock::now();
+        auto downstream_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+            downstream_end - downstream_start).count();
+        LOG_MESSAGE(TRITONSERVER_LOG_INFO, 
+            (std::string("[BLS] Parent downstream model took: ") + 
+             std::to_string(downstream_duration) + " us").c_str());
 
         if (is_decoupled && (infer_response->Id() != nullptr)) {
           // Need to manage the lifetime of InferPayload object for bls
@@ -695,10 +709,18 @@ ModelInstanceState::ExecuteBLSRequest(
   // At this point, the stub has notified the parent process that it has
   // finished loading the inference response from shared memory.
   {
+    auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::high_resolution_clock::now() - exec_start).count();
+    LOG_MESSAGE(TRITONSERVER_LOG_INFO, 
+        (std::string("[BLS] Parent total ExecuteBLSRequest time: ") + 
+         std::to_string(total_duration) + " us, now notifying stub").c_str());
+    
     bi::scoped_lock<bi::interprocess_mutex> lock{
         *(ipc_message->ResponseMutex())};
     ipc_message->ResponseCondition()->notify_all();
     ipc_message->ResponseCondition()->wait(lock);
+    
+    LOG_MESSAGE(TRITONSERVER_LOG_INFO, "[BLS] Parent completed BLS request");
   }
 }
 
@@ -758,8 +780,22 @@ ModelInstanceState::StubToParentMQMonitor()
       }
       case PYTHONSTUB_InferExecRequest:
       case PYTHONSTUB_InferStreamExecRequest: {
+        auto recv_time = std::chrono::high_resolution_clock::now();
+        auto recv_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+            recv_time.time_since_epoch()).count();
+        LOG_MESSAGE(TRITONSERVER_LOG_INFO, 
+            (std::string("[BLS] Parent received BLS request at ") + 
+             std::to_string(recv_ms) + " us").c_str());
+        
         std::shared_ptr<IPCMessage> bls_execute = std::move(message);
-        std::packaged_task<void()> task([this, bls_execute] {
+        std::packaged_task<void()> task([this, bls_execute, recv_time] {
+          auto exec_start = std::chrono::high_resolution_clock::now();
+          auto queue_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+              exec_start - recv_time).count();
+          LOG_MESSAGE(TRITONSERVER_LOG_INFO, 
+              (std::string("[BLS] Parent thread pool queue time: ") + 
+               std::to_string(queue_duration) + " us").c_str());
+          
           ExecuteBLSRequest(
               bls_execute,
               (bls_execute->Command() == PYTHONSTUB_InferStreamExecRequest));
