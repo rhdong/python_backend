@@ -246,12 +246,22 @@ class MessageQueue {
       
       // Only log detailed timing when duration exceeds threshold (e.g., 100us)
       LOG_STDERR("[IPC] MessageQueue::Push - sem_wait_us=" << sem_wait_duration
-                 << " lock_us=" << lock_duration
-                 << " write_us=" << write_duration
-                 << " total_us=" << total_duration);
+                  << " lock_us=" << lock_duration
+                  << " write_us=" << write_duration
+                  << " total_us=" << total_duration);
 #endif
     }
+    
+#ifdef TRITON_PB_STUB
+    auto post_start = std::chrono::high_resolution_clock::now();
+#endif
     SemFullMutable()->post();
+#ifdef TRITON_PB_STUB
+    auto post_end = std::chrono::high_resolution_clock::now();
+    auto post_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        post_end - post_start).count();
+    LOG_STDERR("[IPC] MessageQueue::Push - SemFull post() took " << post_duration << " us");
+#endif
   }
 
   /// Pop a message from the message queue. This call will block until there
