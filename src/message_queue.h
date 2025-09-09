@@ -31,6 +31,7 @@
 #include <boost/interprocess/sync/scoped_lock.hpp>
 #include <boost/thread/thread_time.hpp>
 #include <cstddef>
+#include <chrono>
 
 #include "pb_utils.h"
 #include "shm_manager.h"
@@ -138,13 +139,28 @@ class MessageQueue {
 
   void Push(T message, int const& duration, bool& success)
   {
+#ifdef TRITON_PB_STUB
+    auto total_start = std::chrono::high_resolution_clock::now();
+#endif
+    
     boost::system_time timeout =
         boost::get_system_time() + boost::posix_time::milliseconds(duration);
 
+#ifdef TRITON_PB_STUB
+    auto sem_wait_start = std::chrono::high_resolution_clock::now();
+#endif
+    
     while (true) {
       try {
         if (!SemEmptyMutable()->timed_wait(timeout)) {
           success = false;
+#ifdef TRITON_PB_STUB
+          auto sem_wait_end = std::chrono::high_resolution_clock::now();
+          auto sem_wait_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+              sem_wait_end - sem_wait_start).count();
+          LOG_INFO << "[IPC] MessageQueue::Push - Semaphore wait timeout after " 
+                   << sem_wait_duration << " us";
+#endif
           return;
         } else {
           break;
@@ -154,6 +170,11 @@ class MessageQueue {
       }
     }
 
+#ifdef TRITON_PB_STUB
+    auto sem_wait_end = std::chrono::high_resolution_clock::now();
+    auto lock_start = std::chrono::high_resolution_clock::now();
+#endif
+
     {
       timeout =
           boost::get_system_time() + boost::posix_time::milliseconds(duration);
@@ -161,8 +182,21 @@ class MessageQueue {
       if (!lock) {
         SemEmptyMutable()->post();
         success = false;
+#ifdef TRITON_PB_STUB
+        auto lock_end = std::chrono::high_resolution_clock::now();
+        auto lock_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+            lock_end - lock_start).count();
+        LOG_INFO << "[IPC] MessageQueue::Push - Mutex lock timeout after " 
+                 << lock_duration << " us";
+#endif
         return;
       }
+      
+#ifdef TRITON_PB_STUB
+      auto lock_end = std::chrono::high_resolution_clock::now();
+      auto write_start = std::chrono::high_resolution_clock::now();
+#endif
+      
       success = true;
 
       int head_idx = Head();
@@ -182,6 +216,28 @@ class MessageQueue {
       }
       Buffer()[head_idx] = message;
       HeadIncrement();
+      
+#ifdef TRITON_PB_STUB
+      auto write_end = std::chrono::high_resolution_clock::now();
+      auto total_end = std::chrono::high_resolution_clock::now();
+      
+      auto sem_wait_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+          sem_wait_end - sem_wait_start).count();
+      auto lock_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+          lock_end - lock_start).count();
+      auto write_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+          write_end - write_start).count();
+      auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+          total_end - total_start).count();
+      
+      // Only log detailed timing when duration exceeds threshold (e.g., 100us)
+      if (total_duration > 100) {
+        LOG_INFO << "[IPC] MessageQueue::Push - sem_wait_us=" << sem_wait_duration
+                 << " lock_us=" << lock_duration
+                 << " write_us=" << write_duration
+                 << " total_us=" << total_duration;
+      }
+#endif
     }
     SemFullMutable()->post();
   }

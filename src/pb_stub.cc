@@ -1078,9 +1078,45 @@ Stub::SendIPCMessage(std::unique_ptr<IPCMessage>& ipc_message)
 void
 Stub::SendIPCUtilsMessage(std::unique_ptr<IPCMessage>& ipc_message)
 {
+  auto total_start = std::chrono::high_resolution_clock::now();
+  int retry_count = 0;
   bool success = false;
-  while (!success) {
-    stub_to_parent_mq_->Push(ipc_message->ShmHandle(), 1000, success);
+  
+  // Record the first push attempt timing
+  auto first_push_start = std::chrono::high_resolution_clock::now();
+  stub_to_parent_mq_->Push(ipc_message->ShmHandle(), 1000, success);
+  auto first_push_end = std::chrono::high_resolution_clock::now();
+  
+  if (!success) {
+    auto first_push_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        first_push_end - first_push_start).count();
+    
+    // Log only when the first attempt fails
+    LOG_INFO << "[IPC] SendIPCUtilsMessage - First push failed after " 
+             << first_push_duration << " us, starting retries";
+    
+    while (!success) {
+      retry_count++;
+      stub_to_parent_mq_->Push(ipc_message->ShmHandle(), 1000, success);
+      
+      // Log every 100 retries to avoid log flooding
+      if (retry_count % 100 == 0) {
+        auto current_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - total_start).count();
+        LOG_INFO << "[IPC] SendIPCUtilsMessage - Still retrying, count: " << retry_count
+                 << ", elapsed: " << current_duration << " ms";
+      }
+    }
+  }
+  
+  auto total_end = std::chrono::high_resolution_clock::now();
+  auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      total_end - total_start).count();
+  
+  // Log only when there were retries or duration exceeds threshold
+  if (retry_count > 0 || total_duration > 1000) {  // Log if took more than 1ms
+    LOG_INFO << "[IPC] SendIPCUtilsMessage - Completed. Duration: " << total_duration 
+             << " us, retries: " << retry_count;
   }
 }
 
