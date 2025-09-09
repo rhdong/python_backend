@@ -245,12 +245,10 @@ class MessageQueue {
           total_end - total_start).count();
       
       // Only log detailed timing when duration exceeds threshold (e.g., 100us)
-      if (total_duration > 100) {
-        LOG_STDERR("[IPC] MessageQueue::Push - sem_wait_us=" << sem_wait_duration
-                   << " lock_us=" << lock_duration
-                   << " write_us=" << write_duration
-                   << " total_us=" << total_duration);
-      }
+      LOG_STDERR("[IPC] MessageQueue::Push - sem_wait_us=" << sem_wait_duration
+                 << " lock_us=" << lock_duration
+                 << " write_us=" << write_duration
+                 << " total_us=" << total_duration);
 #endif
     }
     SemFullMutable()->post();
