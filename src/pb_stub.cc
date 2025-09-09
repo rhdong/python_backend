@@ -1092,6 +1092,8 @@ Stub::SendIPCMessage(std::unique_ptr<IPCMessage>& ipc_message)
 void
 Stub::SendIPCUtilsMessage(std::unique_ptr<IPCMessage>& ipc_message)
 {
+  LOG_STDERR("[IPC] SendIPCUtilsMessage in");
+  std::cout << "[IPC] SendIPCUtilsMessage in 2" << std::endl;
   auto total_start = std::chrono::high_resolution_clock::now();
   int retry_count = 0;
   bool success = false;
