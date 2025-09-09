@@ -1081,7 +1081,7 @@ Stub::SendIPCUtilsMessage(std::unique_ptr<IPCMessage>& ipc_message)
   auto total_start = std::chrono::high_resolution_clock::now();
   int retry_count = 0;
   bool success = false;
-  
+  LOG_INFO << "[IPC] SendIPCUtilsMessage in";
   // Record the first push attempt timing
   auto first_push_start = std::chrono::high_resolution_clock::now();
   stub_to_parent_mq_->Push(ipc_message->ShmHandle(), 1000, success);
